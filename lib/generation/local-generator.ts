@@ -55,25 +55,25 @@ export async function generateLocalAgingGif(
 
   const stages = [
     {
-      age: "Age 20",
+      age: "Original Photo",
       modulate: { brightness: 1.0, saturation: 1.05 },
       gamma: 1.0,
       sharpen: false,
     },
     {
-      age: "Age 40",
+      age: "+15 Years",
       modulate: { brightness: 0.96, saturation: 0.92 },
       gamma: 1.1,
       sharpen: true,
     },
     {
-      age: "Age 60",
+      age: "+30 Years",
       modulate: { brightness: 0.92, saturation: 0.75 },
       gamma: 1.25,
       sharpen: true,
     },
     {
-      age: "Age 80",
+      age: "+45 Years",
       modulate: { brightness: 0.88, saturation: 0.55 },
       gamma: 1.4,
       sharpen: true,

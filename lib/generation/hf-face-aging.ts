@@ -108,13 +108,13 @@ export async function generateFreeAiAging(
     .raw()
     .toBuffer();
 
-  // 3. Construct 5 distinct progressive timeline frames
+  // 3. Construct 5 distinct progressive timeline frames (universal relative progression)
   const timelineStages = [
-    { t: 0.0, label: "Original / Age 20" },
-    { t: 0.25, label: "Age ~35" },
-    { t: 0.50, label: "Age ~50" },
-    { t: 0.75, label: "Age ~65" },
-    { t: 1.0, label: "Age ~80" },
+    { t: 0.0, label: "Original Photo" },
+    { t: 0.25, label: "+15 Years" },
+    { t: 0.50, label: "+30 Years" },
+    { t: 0.75, label: "+45 Years" },
+    { t: 1.0, label: "Mature / Senior" },
   ];
 
   const encoder = new GIFEncoder(size, size, "neuquant", true);

@@ -1,0 +1,32 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next
+next-env.d.ts
+*.tsbuildinfo
+
+# misc
+.DS_Store
+*.pem
+
+# local env files
+.env.local
+.env
+
+# vercel
+.vercel
+
+# supabase
+/supabase/.branches
+/supabase/.temp
+/supabase/.env
+.env*.local
+
+# sqlite database
+/data
+/backups
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

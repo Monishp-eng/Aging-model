@@ -1,0 +1,76 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Production Release Gate & Smoke Tests
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      NODE_ENV: test
+      DATABASE_URL: file:./data/ci-test.db
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-mock.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-mock-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: ci-mock-service-role-key
+      STRIPE_SECRET_KEY: sk_test_ci_mock
+      STRIPE_WEBHOOK_SECRET: whsec_ci_mock
+      REPLICATE_API_TOKEN: r8_ci_mock
+      REPLICATE_WEBHOOK_SECRET: whsec_ci_mock
+      CRON_SECRET: ci_cron_secret_mock
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static Security & Secret Scan
+        run: npm run security:scan
+
+      - name: Code Quality & Lint Gate
+        run: npm run lint
+
+      - name: TypeScript Typecheck Gate
+        run: npx tsc --noEmit
+
+      - name: Fresh-database Migration Gate from Zero
+        run: npm run db:test-zero
+
+      - name: Automated Vitest Test Suite (Unit, Integration, Security, Concurrency, Abuse)
+        run: npm test
+
+      - name: Production Build Verification
+        run: npm run build
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright Production Smoke Tests
+        run: npx playwright test e2e/smoke.spec.ts
+        env:
+          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3000
+
+      - name: Upload Playwright Test Report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

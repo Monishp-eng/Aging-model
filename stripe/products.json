@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "template_version": 0
+  },
+  "fixtures": [
+    {
+      "name": "Starter",
+      "path": "/v1/prices",
+      "method": "post",
+      "params": {
+        "currency": "usd",
+        "unit_amount": 900,
+        "product_data": {
+          "name": "Starter",
+          "metadata": {
+            "credits": "100"
+          }
+        }
+      }
+    },
+    {
+      "name": "Pro",
+      "path": "/v1/prices",
+      "method": "post",
+      "params": {
+        "currency": "usd",
+        "unit_amount": 1900,
+        "product_data": {
+          "name": "Pro",
+          "metadata": {
+            "credits": "900"
+          }
+        }
+      }
+    },
+    {
+      "name": "Premium",
+      "path": "/v1/prices",
+      "method": "post",
+      "params": {
+        "currency": "usd",
+        "unit_amount": 3900,
+        "product_data": {
+          "name": "Premium",
+          "metadata": {
+            "credits": "4000"
+          }
+        }
+      }
+    }
+  ]
+}

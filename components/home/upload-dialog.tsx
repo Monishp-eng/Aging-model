@@ -22,7 +22,7 @@ import Link from "next/link";
 import { Separator } from "@/components/ui/separator";
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoadingDots } from "@/components/shared/icons";
-import { UploadCloud, Camera, RefreshCw, AlertCircle, Check } from "lucide-react";
+import { UploadCloud, Camera, RefreshCw, AlertCircle, Check, SwitchCamera } from "lucide-react";
 import { useFormState, useFormStatus } from "react-dom";
 import { upload } from "@/app/actions/upload";
 import { toast } from "sonner";
@@ -118,42 +118,98 @@ export function UploadForm({ isOpen }: { isOpen: boolean }) {
   // Webcam stream state
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [hasStream, setHasStream] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isCameraStarting, setIsCameraStarting] = useState(false);
   const [flashEffect, setFlashEffect] = useState(false);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      });
+      streamRef.current = null;
     }
-  }, [stream]);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setHasStream(false);
+  }, []);
 
-  // Start webcam
-  const startCamera = useCallback(async () => {
+  // Start webcam with multi-stage fallback
+  const startCamera = useCallback(async (deviceIdToUse?: string) => {
     setCameraError(null);
     setIsCameraStarting(true);
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      });
+      streamRef.current = null;
+    }
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Webcam access is not supported by your browser");
       }
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 720 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
+      const targetDeviceId = deviceIdToUse || selectedDeviceId;
+      let mediaStream: MediaStream;
 
-      setStream(mediaStream);
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: targetDeviceId
+            ? { deviceId: { exact: targetDeviceId } }
+            : {
+                facingMode: "user",
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+          audio: false,
+        });
+      } catch (firstErr) {
+        console.warn("High-res / user-facing constraints failed, falling back to basic video:", firstErr);
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: targetDeviceId ? { deviceId: targetDeviceId } : true,
+          audio: false,
+        });
+      }
+
+      streamRef.current = mediaStream;
+      setHasStream(true);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn("Video auto-play warning:", playErr);
+        }
+      }
+
+      try {
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = allDevices.filter((d) => d.kind === "videoinput");
+        setDevices(videoInputs);
+        if (targetDeviceId) {
+          setSelectedDeviceId(targetDeviceId);
+        } else if (videoInputs.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoInputs[0].deviceId);
+        }
+      } catch {
+        // ignore
       }
     } catch (err: any) {
       console.error("Camera access error:", err);
@@ -162,20 +218,25 @@ export function UploadForm({ isOpen }: { isOpen: boolean }) {
         msg = "Camera permission denied. Please allow camera access in your browser.";
       } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
         msg = "No webcam device found on your system.";
+      } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+        msg = "Camera is currently busy or in use by another application.";
       }
       setCameraError(msg);
       toast.error(msg);
     } finally {
       setIsCameraStarting(false);
     }
-  }, []);
+  }, [selectedDeviceId]);
 
-  // Connect video element when stream is ready
-  useEffect(() => {
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream]);
+  // Switch camera if multiple cameras exist
+  const switchCamera = useCallback(() => {
+    if (devices.length < 2) return;
+    const currentIndex = devices.findIndex((d) => d.deviceId === selectedDeviceId);
+    const nextIndex = (currentIndex + 1) % devices.length;
+    const nextDevice = devices[nextIndex];
+    setSelectedDeviceId(nextDevice.deviceId);
+    startCamera(nextDevice.deviceId);
+  }, [devices, selectedDeviceId, startCamera]);
 
   // Control camera when switching tabs or closing dialog
   useEffect(() => {
@@ -188,7 +249,7 @@ export function UploadForm({ isOpen }: { isOpen: boolean }) {
     return () => {
       stopCamera();
     };
-  }, [isOpen, mode, data.image, startCamera, stopCamera]);
+  }, [isOpen, mode, data.image]);
 
   // Capture frame from webcam onto canvas and populate file input
   const capturePhoto = useCallback(() => {
@@ -399,50 +460,81 @@ export function UploadForm({ isOpen }: { isOpen: boolean }) {
                   type="button"
                   variant="secondary"
                   size="sm"
-                  onClick={startCamera}
+                  onClick={() => startCamera()}
                   className="mt-3 rounded-full text-xs"
                 >
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                   Retry Access
                 </Button>
               </div>
-            ) : isCameraStarting ? (
-              <div className="flex flex-col items-center justify-center text-center">
-                <LoadingDots color="#ffffff" />
-                <p className="mt-2 text-xs text-neutral-400">Starting camera...</p>
-              </div>
             ) : (
               <>
-                {/* Live Video View (Mirrored) */}
+                {/* Live Video View (Mirrored) - Persistent in DOM */}
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className="h-full w-full object-cover [transform:scaleX(-1)]"
+                  onLoadedMetadata={() => {
+                    setIsCameraStarting(false);
+                  }}
+                  className={cn(
+                    "h-full w-full object-cover [transform:scaleX(-1)] transition-opacity duration-300",
+                    isCameraStarting || !hasStream ? "opacity-0 pointer-events-none" : "opacity-100"
+                  )}
                 />
 
+                {/* Loading indicator overlay during warm-up */}
+                {(isCameraStarting || !hasStream) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 text-center z-10">
+                    <LoadingDots color="#ffffff" />
+                    <p className="mt-3 text-xs font-medium text-neutral-300">Starting camera...</p>
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      Please allow camera access in browser popup
+                    </p>
+                  </div>
+                )}
+
                 {/* Face Alignment Oval Guide */}
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="h-44 w-36 rounded-[50%] border-2 border-dashed border-white/40 shadow-sm" />
-                </div>
+                {hasStream && !isCameraStarting && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <div className="h-44 w-36 rounded-[50%] border-2 border-dashed border-white/40 shadow-sm" />
+                  </div>
+                )}
 
                 {/* Flash Effect on Capture */}
                 {flashEffect && (
-                  <div className="pointer-events-none absolute inset-0 bg-white opacity-80 transition-opacity" />
+                  <div className="pointer-events-none absolute inset-0 bg-white opacity-80 transition-opacity z-20" />
+                )}
+
+                {/* Switch Camera Button (Shown when 2 or more cameras detected) */}
+                {devices.length > 1 && hasStream && (
+                  <div className="absolute top-3 right-3 z-10">
+                    <button
+                      type="button"
+                      onClick={switchCamera}
+                      title="Switch Camera"
+                      className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-semibold text-white backdrop-blur-md transition-all hover:bg-black/80"
+                    >
+                      <SwitchCamera className="h-3.5 w-3.5" />
+                      <span>Switch Camera</span>
+                    </button>
+                  </div>
                 )}
 
                 {/* Shutter Action Button */}
-                <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={capturePhoto}
-                    className="flex items-center gap-2 rounded-full bg-white px-5 py-2 text-xs font-bold text-neutral-900 shadow-xl ring-2 ring-white/50 transition-all duration-150 hover:scale-105 active:scale-95"
-                  >
-                    <div className="h-3 w-3 rounded-full bg-red-600 animate-pulse" />
-                    <span>Snap Photo</span>
-                  </button>
-                </div>
+                {hasStream && !isCameraStarting && (
+                  <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-2 z-10">
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="flex items-center gap-2 rounded-full bg-white px-5 py-2 text-xs font-bold text-neutral-900 shadow-xl ring-2 ring-white/50 transition-all duration-150 hover:scale-105 active:scale-95"
+                    >
+                      <div className="h-3 w-3 rounded-full bg-red-600 animate-pulse" />
+                      <span>Snap Photo</span>
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>

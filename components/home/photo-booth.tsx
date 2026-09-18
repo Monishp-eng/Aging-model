@@ -3,8 +3,8 @@
 /* eslint-disable @next/next/no-img-element */
 import { FADE_DOWN_ANIMATION_VARIANTS } from "@/lib/constants";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, Sparkles, User as UserIcon, Share2, Check, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, Sparkles, User as UserIcon, Share2, Check, RefreshCw, SlidersHorizontal, Film } from "lucide-react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { LoadingCircle } from "../shared/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,91 @@ function forceDownload(blobUrl: string, filename: string) {
   a.remove();
 }
 
+function SplitSlider({
+  beforeImage,
+  afterImage,
+}: {
+  beforeImage: string;
+  afterImage: string;
+}) {
+  const [sliderPos, setSliderPos] = useState(50);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isDragging = useRef(false);
+
+  const handleMove = useCallback((clientX: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const pos = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    setSliderPos(pos);
+  }, []);
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    handleMove(e.touches[0].clientX);
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (isDragging.current || e.buttons === 1) {
+      handleMove(e.clientX);
+    }
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      onMouseDown={(e) => {
+        isDragging.current = true;
+        handleMove(e.clientX);
+      }}
+      onMouseUp={() => {
+        isDragging.current = false;
+      }}
+      onMouseLeave={() => {
+        isDragging.current = false;
+      }}
+      onMouseMove={onMouseMove}
+      onTouchMove={onTouchMove}
+      className="relative aspect-square w-full select-none overflow-hidden rounded-2xl cursor-ew-resize"
+    >
+      {/* Background: Aged Output Image */}
+      <img
+        src={afterImage}
+        alt="Aged Result"
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+      />
+      <div className="absolute top-3 right-3 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md z-10">
+        Aged Result
+      </div>
+
+      {/* Foreground: Original Image clipped by sliderPos */}
+      <div
+        style={{ width: `${sliderPos}%` }}
+        className="absolute inset-y-0 left-0 overflow-hidden border-r-2 border-white shadow-2xl z-10"
+      >
+        <img
+          src={beforeImage}
+          alt="Original"
+          className="pointer-events-none absolute inset-0 h-full max-w-none object-cover"
+          style={{ width: containerRef.current ? `${containerRef.current.clientWidth}px` : "100%" }}
+        />
+        <div className="absolute top-3 left-3 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+          Original Photo
+        </div>
+      </div>
+
+      {/* Center Draggable Line and Handle */}
+      <div
+        style={{ left: `${sliderPos}%` }}
+        className="pointer-events-none absolute inset-y-0 -ml-4 flex items-center justify-center z-20"
+      >
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-xl ring-2 ring-black/10 text-neutral-800 text-xs font-bold transition-transform hover:scale-110">
+          ↔
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PhotoBooth({
   id,
   input,
@@ -46,6 +131,7 @@ export default function PhotoBooth({
 }) {
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(initialState);
+  const [viewMode, setViewMode] = useState<"timeline" | "split">("timeline");
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -139,6 +225,38 @@ export default function PhotoBooth({
               <span>Aged Result</span>
             </button>
           </div>
+
+          {/* Sub-view mode toggle: Timeline GIF vs Split Compare */}
+          {output && current === 1 && (
+            <div className="flex items-center rounded-full bg-neutral-100/90 p-1 ring-1 ring-black/[0.05]">
+              <button
+                type="button"
+                onClick={() => setViewMode("timeline")}
+                className={cn(
+                  "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-200",
+                  viewMode === "timeline"
+                    ? "bg-white text-neutral-900 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-900",
+                )}
+              >
+                <Film className="h-3 w-3 text-indigo-500" />
+                <span>Loop</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("split")}
+                className={cn(
+                  "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-200",
+                  viewMode === "split"
+                    ? "bg-white text-neutral-900 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-900",
+                )}
+              >
+                <SlidersHorizontal className="h-3 w-3 text-emerald-500" />
+                <span>Split</span>
+              </button>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
@@ -266,11 +384,15 @@ export default function PhotoBooth({
                     </div>
                   </div>
                 ) : (
-                  <img
-                    alt="AI aging progression"
-                    src={output || ""}
-                    className="h-full w-full object-cover"
-                  />
+                  viewMode === "split" ? (
+                    <SplitSlider beforeImage={input} afterImage={output || ""} />
+                  ) : (
+                    <img
+                      alt="AI aging progression"
+                      src={output || ""}
+                      className="h-full w-full object-cover"
+                    />
+                  )
                 )}
               </Card>
             </CarouselItem>
@@ -279,7 +401,11 @@ export default function PhotoBooth({
 
         {/* Bottom Helper / Prompt */}
         <div className="mt-3 flex items-center justify-between px-1 text-[11px] text-neutral-400">
-          <span>Click tabs or swipe to compare</span>
+          <span>
+            {output && current === 1 && viewMode === "split"
+              ? "Drag slider left/right to compare before and after"
+              : "Click tabs or swipe to compare"}
+          </span>
           <span className="flex items-center gap-1 text-neutral-500">
             🔒 Auto-deletes in 24h
           </span>

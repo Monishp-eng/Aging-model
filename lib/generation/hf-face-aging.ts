@@ -31,24 +31,59 @@ function createBadge(width: number, height: number, text: string): Buffer {
 }
 
 /**
- * Mathematically blends two raw RGB image buffers pixel-by-pixel.
- * Guarantees distinct, non-identical intermediate aging frames.
+ * Mathematically blends two raw RGB image buffers with a feathered spatial facial mask.
+ * Pins the background, clothing, and body to the original photo to completely eliminate
+ * ghosting, double shirt logos, and blurry walls.
  */
-function blendRawBuffers(bufA: Buffer, bufB: Buffer, t: number): Buffer {
-  const len = Math.min(bufA.length, bufB.length);
+function blendRawBuffers(
+  origBuf: Buffer,
+  agedBuf: Buffer,
+  t: number,
+  size: number = 512,
+): Buffer {
+  const len = size * size * 3;
   const result = Buffer.alloc(len);
-  const oneMinusT = 1 - t;
 
-  for (let i = 0; i < len; i++) {
-    result[i] = Math.round(bufA[i] * oneMinusT + bufB[i] * t);
+  const cx = size * 0.5;
+  const cy = size * 0.44;
+  const rx = size * 0.38;
+  const ry = size * 0.46;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 3;
+
+      // Elliptical radial distance from face center
+      const dx = (x - cx) / rx;
+      const dy = (y - cy) / ry;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Feathered mask: 1.0 inside inner core (0.65), falling to 0.0 outside outer rim (1.0)
+      let mask = 1.0;
+      if (dist > 1.0) {
+        mask = 0.0;
+      } else if (dist > 0.65) {
+        mask = 1.0 - (dist - 0.65) / 0.35;
+      }
+
+      // Smooth cosine falloff for seamless boundary integration
+      const smoothMask = Math.sin((mask * Math.PI) / 2);
+      const blendT = t * smoothMask;
+      const oneMinusT = 1 - blendT;
+
+      result[idx] = Math.round(origBuf[idx] * oneMinusT + agedBuf[idx] * blendT);
+      result[idx + 1] = Math.round(origBuf[idx + 1] * oneMinusT + agedBuf[idx + 1] * blendT);
+      result[idx + 2] = Math.round(origBuf[idx + 2] * oneMinusT + agedBuf[idx + 2] * blendT);
+    }
   }
+
   return result;
 }
 
 /**
  * Generates true neural face aging using Hugging Face Free Space (Robys01/Face-Aging).
- * Creates a distinct 5-stage progressive timeline:
- * Original (20s) -> 35s -> 50s -> 65s -> 80s (Elderly neural face)
+ * Creates a photorealistic 5-stage progressive timeline with zero ghosting:
+ * Original Photo -> +15 Years -> +30 Years -> +45 Years -> Mature / Senior
  */
 export async function generateFreeAiAging(
   inputBuffer: Buffer,
@@ -131,23 +166,23 @@ export async function generateFreeAiAging(
     .raw()
     .toBuffer();
 
-  // 3. Construct 5 distinct progressive timeline frames
+  // 3. Construct 6 distinct progressive timeline frames with organic pause delays
   const timelineStages = [
-    { t: 0.0, label: "Original Photo" },
-    { t: 0.25, label: "+15 Years" },
-    { t: 0.50, label: "+30 Years" },
-    { t: 0.75, label: "+45 Years" },
-    { t: 1.0, label: "Mature / Senior" },
+    { t: 0.0, label: "Original Photo", delay: 1200 },
+    { t: 0.28, label: "+15 Years", delay: 850 },
+    { t: 0.58, label: "+30 Years", delay: 850 },
+    { t: 0.85, label: "+45 Years", delay: 850 },
+    { t: 1.0, label: "Mature / Senior", delay: 1600 },
+    { t: 0.58, label: "+30 Years", delay: 600 },
   ];
 
-  // Fast octree color quantization for instantaneous GIF compilation
   const encoder = new GIFEncoder(size, size, "octree", true);
-  encoder.setDelay(850); // 850ms per frame for clear inspection
   encoder.setRepeat(0); // Infinite loop
   encoder.start();
 
   for (const stage of timelineStages) {
-    const blended = blendRawBuffers(origRaw, agedRaw, stage.t);
+    encoder.setDelay(stage.delay);
+    const blended = blendRawBuffers(origRaw, agedRaw, stage.t, size);
     const badge = createBadge(size, size, stage.label);
     const composited = await sharp(blended, {
       raw: { width: size, height: size, channels: 3 },
@@ -162,7 +197,7 @@ export async function generateFreeAiAging(
   encoder.finish();
   const gifBuffer = encoder.out.getData();
 
-  // 4. Upload to Supabase Storage in 'output' bucket
+  // 4. Upload animated GIF to Supabase Storage in 'output' bucket
   const supabaseAdmin = createAdminClient();
   const relativeKey = getOutputKey(userId, generationId, "gif");
   const canonicalOutputPath = `output/${relativeKey}`;
@@ -178,6 +213,28 @@ export async function generateFreeAiAging(
   if (storageError) {
     throw new Error(`Failed to store generated GIF: ${storageError.message}`);
   }
+
+  // 5. Also save full-resolution 24-bit HD aged portrait JPEG (for comparison slider)
+  try {
+    const hdPortrait = blendRawBuffers(origRaw, agedRaw, 1.0, size);
+    const hdPortraitBuffer = await sharp(hdPortrait, {
+      raw: { width: size, height: size, channels: 3 },
+    })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    const hdKey = getOutputKey(userId, generationId, "jpg");
+    await supabaseAdmin.storage
+      .from("output")
+      .upload(hdKey, hdPortraitBuffer, {
+        contentType: "image/jpeg",
+        cacheControl: "3600",
+        upsert: true,
+      });
+  } catch (hdErr) {
+    console.warn("Could not upload HD portrait JPEG:", hdErr);
+  }
+
 
   // 5. Update generation record in SQLite to 'succeeded'
   await transitionGeneration(generationId, "succeeded", {

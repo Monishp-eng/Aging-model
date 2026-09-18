@@ -95,14 +95,15 @@ export default function PhotoPage({
         return;
       }
 
-      // Bounded exponential backoff: 2s -> 3s -> 4s -> max 10s + jitter
-      const delay = Math.min(2000 + attempt * 1000, 10000) + Math.random() * 500;
+      // Fast responsive polling: 400ms -> 800ms -> 1200ms -> max 3000ms
+      const delay = Math.min(400 + attempt * 400, 3000) + Math.random() * 200;
       if (activeRef.current) {
         timeoutId = setTimeout(poll, delay);
       }
     }
 
-    timeoutId = setTimeout(poll, 2000);
+    // First poll triggers immediately (350ms) to display result without artificial waiting
+    timeoutId = setTimeout(poll, 350);
 
     return () => {
       clearTimeout(timeoutId);

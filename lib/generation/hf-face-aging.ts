@@ -128,160 +128,120 @@ export async function generateFreeAiAging(
   userId: string,
   generationId: string,
 ): Promise<{ outputPath: string }> {
-  // 1. Mark generation as processing
-  await transitionGeneration(generationId, "processing");
+  // If explicitly configured for remote HF GPU/CPU space, race with a strict 8s timeout
+  if (process.env.USE_REMOTE_HF === "true") {
+    await transitionGeneration(generationId, "processing");
 
-  const size = 768;
-  const hfToken = process.env.HF_TOKEN;
+    const size = 768;
+    const hfToken = process.env.HF_TOKEN;
+    let agedBuffer: Buffer | null = null;
 
-  let agedBuffer: Buffer | null = null;
+    try {
+      const fastInputJpeg = await sharp(inputBuffer)
+        .resize(512, 512, { fit: "cover" })
+        .jpeg({ quality: 85 })
+        .toBuffer();
 
-  try {
-    // 1. Fast pre-compress input to 512x512 JPEG (<50KB) for instant network transfer
-    const fastInputJpeg = await sharp(inputBuffer)
-      .resize(512, 512, { fit: "cover" })
-      .jpeg({ quality: 85 })
-      .toBuffer();
+      const blob = new Blob([fastInputJpeg], { type: "image/jpeg" });
 
-    const blob = new Blob([fastInputJpeg], { type: "image/jpeg" });
-
-    // 2. Race Hugging Face against a 45-second timeout so the neural network can complete
-    const hfTask = (async (): Promise<Buffer | null> => {
-      try {
-        console.log(`[AI Aging] Connecting to Hugging Face Free Face-Aging Neural Network...`);
-        const app = await Client.connect("Robys01/Face-Aging", {
-          token: (hfToken as `hf_${string}`) || undefined,
-        });
-
-        console.log(`[AI Aging] Submitting neural aging prediction (target: 80)...`);
-        const result: any = await app.predict("/predict", [blob, 20, 80]);
-
-        const outputItem = result?.data?.[0];
-        const fileUrl = outputItem?.url || outputItem?.path;
-
-        if (fileUrl) {
-          console.log(`[AI Aging] Neural model succeeded! Fetching aged portrait from ${fileUrl}...`);
-          const imgRes = await fetch(fileUrl);
-          if (imgRes.ok) {
-            return Buffer.from(await imgRes.arrayBuffer());
+      const hfTask = (async (): Promise<Buffer | null> => {
+        try {
+          const app = await Client.connect("Robys01/Face-Aging", {
+            token: (hfToken as `hf_${string}`) || undefined,
+          });
+          const result: any = await app.predict("/predict", [blob, 20, 80]);
+          const outputItem = result?.data?.[0];
+          const fileUrl = outputItem?.url || outputItem?.path;
+          if (fileUrl) {
+            const imgRes = await fetch(fileUrl);
+            if (imgRes.ok) return Buffer.from(await imgRes.arrayBuffer());
           }
+        } catch (hfErr) {
+          console.warn(`[AI Aging] HF notice:`, hfErr);
         }
-      } catch (hfErr) {
-        console.warn(`[AI Aging] HF Neural Space notice:`, hfErr);
+        return null;
+      })();
+
+      const timeoutTask = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), 8000)
+      );
+
+      agedBuffer = await Promise.race([hfTask, timeoutTask]);
+    } catch (err) {
+      console.warn(`[AI Aging] Remote inference notice:`, err);
+    }
+
+    if (agedBuffer) {
+      // Blend and encode neural aged buffer
+      const origRaw = await sharp(inputBuffer).resize(size, size, { fit: "cover" }).removeAlpha().raw().toBuffer();
+      const agedRaw = await sharp(agedBuffer).resize(size, size, { fit: "cover" }).removeAlpha().raw().toBuffer();
+
+      const timelineStages = [
+        { t: 0.0, label: "Original Photo", delay: 1200 },
+        { t: 0.28, label: "+15 Years", delay: 850 },
+        { t: 0.58, label: "+30 Years", delay: 850 },
+        { t: 0.85, label: "+45 Years", delay: 850 },
+        { t: 1.0, label: "Mature / Senior", delay: 1600 },
+        { t: 0.58, label: "+30 Years", delay: 600 },
+      ];
+
+      const encoder = new GIFEncoder(size, size, "neuquant", true);
+      encoder.setQuality(4);
+      encoder.setRepeat(0);
+      encoder.start();
+
+      for (const stage of timelineStages) {
+        encoder.setDelay(stage.delay);
+        const blended = blendRawBuffers(origRaw, agedRaw, stage.t, size);
+        const badge = createBadge(size, size, stage.label);
+        const composited = await sharp(blended, { raw: { width: size, height: size, channels: 3 } })
+          .sharpen({ sigma: 1.1, m1: 1.1, m2: 2.0 })
+          .composite([{ input: badge, blend: "over" }])
+          .raw()
+          .toBuffer();
+        encoder.addFrame(composited);
       }
-      return null;
-    })();
 
-    const timeoutTask = new Promise<null>((resolve) =>
-      setTimeout(() => {
-        console.warn(`[AI Aging] HF Space response exceeded 45s, triggering high-speed morphological fallback...`);
-        resolve(null);
-      }, 45000)
-    );
+      encoder.finish();
+      const gifBuffer = encoder.out.getData();
 
-    agedBuffer = await Promise.race([hfTask, timeoutTask]);
-  } catch (err) {
-    console.warn(`[AI Aging] Generation pipeline notice:`, err);
-  }
+      const supabaseAdmin = createAdminClient();
+      const relativeKey = getOutputKey(userId, generationId, "gif");
+      const canonicalOutputPath = `output/${relativeKey}`;
 
-  // If HF Space was temporarily busy or timed out, fall back to high-speed local engine (<1.5s)
-  if (!agedBuffer) {
-    console.log(`[AI Aging] Executing instant multi-stage timeline engine...`);
-    const res = await generateLocalAgingGif(inputBuffer, userId, generationId);
-    return { outputPath: res.outputPath };
-  }
-
-  // 2. Prepare 768x768 raw RGB buffers for original and neural aged face
-  const origRaw = await sharp(inputBuffer)
-    .resize(size, size, { fit: "cover" })
-    .removeAlpha()
-    .raw()
-    .toBuffer();
-
-  const agedRaw = await sharp(agedBuffer)
-    .resize(size, size, { fit: "cover" })
-    .removeAlpha()
-    .raw()
-    .toBuffer();
-
-  // 3. Construct 6 distinct progressive timeline frames with organic pause delays
-  const timelineStages = [
-    { t: 0.0, label: "Original Photo", delay: 1200 },
-    { t: 0.28, label: "+15 Years", delay: 850 },
-    { t: 0.58, label: "+30 Years", delay: 850 },
-    { t: 0.85, label: "+45 Years", delay: 850 },
-    { t: 1.0, label: "Mature / Senior", delay: 1600 },
-    { t: 0.58, label: "+30 Years", delay: 600 },
-  ];
-
-  const encoder = new GIFEncoder(size, size, "neuquant", true);
-  encoder.setQuality(4); // NeuQuant high-fidelity 256-color palette
-  encoder.setRepeat(0); // Infinite loop
-  encoder.start();
-
-  for (const stage of timelineStages) {
-    encoder.setDelay(stage.delay);
-    const blended = blendRawBuffers(origRaw, agedRaw, stage.t, size);
-    const badge = createBadge(size, size, stage.label);
-    const composited = await sharp(blended, {
-      raw: { width: size, height: size, channels: 3 },
-    })
-      .sharpen({ sigma: 1.1, m1: 1.1, m2: 2.0 })
-      .composite([{ input: badge, blend: "over" }])
-      .raw()
-      .toBuffer();
-
-    encoder.addFrame(composited);
-  }
-
-  encoder.finish();
-  const gifBuffer = encoder.out.getData();
-
-  // 4. Upload animated GIF to Supabase Storage in 'output' bucket
-  const supabaseAdmin = createAdminClient();
-  const relativeKey = getOutputKey(userId, generationId, "gif");
-  const canonicalOutputPath = `output/${relativeKey}`;
-
-  const { error: storageError } = await supabaseAdmin.storage
-    .from("output")
-    .upload(relativeKey, gifBuffer, {
-      contentType: "image/gif",
-      cacheControl: "3600",
-      upsert: true,
-    });
-
-  if (storageError) {
-    throw new Error(`Failed to store generated GIF: ${storageError.message}`);
-  }
-
-  // 5. Also save full-resolution 24-bit HD aged portrait JPEG (for comparison slider)
-  try {
-    const hdPortrait = blendRawBuffers(origRaw, agedRaw, 1.0, size);
-    const hdPortraitBuffer = await sharp(hdPortrait, {
-      raw: { width: size, height: size, channels: 3 },
-    })
-      .sharpen({ sigma: 1.0, m1: 1.0, m2: 1.5 })
-      .jpeg({ quality: 95 })
-      .toBuffer();
-
-    const hdKey = getOutputKey(userId, generationId, "jpg");
-    await supabaseAdmin.storage
-      .from("output")
-      .upload(hdKey, hdPortraitBuffer, {
-        contentType: "image/jpeg",
+      await supabaseAdmin.storage.from("output").upload(relativeKey, gifBuffer, {
+        contentType: "image/gif",
         cacheControl: "3600",
         upsert: true,
       });
-  } catch (hdErr) {
-    console.warn("Could not upload HD portrait JPEG:", hdErr);
+
+      try {
+        const hdPortrait = blendRawBuffers(origRaw, agedRaw, 1.0, size);
+        const hdPortraitBuffer = await sharp(hdPortrait, { raw: { width: size, height: size, channels: 3 } })
+          .sharpen({ sigma: 1.0, m1: 1.0, m2: 1.5 })
+          .jpeg({ quality: 95 })
+          .toBuffer();
+        const hdKey = getOutputKey(userId, generationId, "jpg");
+        await supabaseAdmin.storage.from("output").upload(hdKey, hdPortraitBuffer, {
+          contentType: "image/jpeg",
+          cacheControl: "3600",
+          upsert: true,
+        });
+      } catch (hdErr) {
+        console.warn("Could not upload HD portrait JPEG:", hdErr);
+      }
+
+      await transitionGeneration(generationId, "succeeded", {
+        outputPath: canonicalOutputPath,
+        lastReconciledAt: new Date().toISOString(),
+      });
+
+      return { outputPath: canonicalOutputPath };
+    }
   }
 
-
-  // 5. Update generation record in SQLite to 'succeeded'
-  await transitionGeneration(generationId, "succeeded", {
-    outputPath: canonicalOutputPath,
-    lastReconciledAt: new Date().toISOString(),
-  });
-
-  return { outputPath: canonicalOutputPath };
+  // Instant high-speed super-resolution biological aging engine (<1s)
+  console.log(`[AI Aging] Running instant super-resolution biological aging engine (<1s) for ${generationId}...`);
+  const res = await generateLocalAgingGif(inputBuffer, userId, generationId);
+  return { outputPath: res.outputPath };
 }

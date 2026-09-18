@@ -30,10 +30,12 @@ function createBadge(width: number, height: number, text: string): Buffer {
   return Buffer.from(svg);
 }
 
+
 /**
- * Mathematically blends two raw RGB image buffers with a feathered spatial facial mask.
- * Pins the background, clothing, and body to the original photo to completely eliminate
- * ghosting, double shirt logos, and blurry walls.
+ * Mathematically blends two raw RGB image buffers with a feathered spatial facial mask
+ * and biological hair/beard silvering and graying.
+ * Pins the background, clothing, and body to the original photo (zero ghosting),
+ * while progressively silvering the hair, temples, and beard as age increases.
  */
 function blendRawBuffers(
   origBuf: Buffer,
@@ -58,7 +60,7 @@ function blendRawBuffers(
       const dy = (y - cy) / ry;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      // Feathered mask: 1.0 inside inner core (0.65), falling to 0.0 outside outer rim (1.0)
+      // Feathered face mask: 1.0 inside inner core (0.65), falling to 0.0 outside outer rim (1.0)
       let mask = 1.0;
       if (dist > 1.0) {
         mask = 0.0;
@@ -71,9 +73,45 @@ function blendRawBuffers(
       const blendT = t * smoothMask;
       const oneMinusT = 1 - blendT;
 
-      result[idx] = Math.round(origBuf[idx] * oneMinusT + agedBuf[idx] * blendT);
-      result[idx + 1] = Math.round(origBuf[idx + 1] * oneMinusT + agedBuf[idx + 1] * blendT);
-      result[idx + 2] = Math.round(origBuf[idx + 2] * oneMinusT + agedBuf[idx + 2] * blendT);
+      let r = Math.round(origBuf[idx] * oneMinusT + agedBuf[idx] * blendT);
+      let g = Math.round(origBuf[idx + 1] * oneMinusT + agedBuf[idx + 1] * blendT);
+      let b = Math.round(origBuf[idx + 2] * oneMinusT + agedBuf[idx + 2] * blendT);
+
+      // --- Biological Hair & Beard Silvering/Graying Engine ---
+      if (t > 0.15 && dist < 1.15) {
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        const sat = Math.max(r, g, b) - Math.min(r, g, b);
+
+        // Protect eye sockets and pupils from discoloration
+        const eyeDx = Math.abs(x - cx) / (size * 0.20);
+        const eyeDy = Math.abs(y - (cy - 12)) / (size * 0.08);
+        const eyeDist = Math.sqrt(eyeDx * eyeDx + eyeDy * eyeDy);
+        const eyeMask = Math.max(0, Math.min(1, 1.2 - eyeDist));
+
+        // Continuous biological hair density mapping (crown, temples, beard)
+        const upperHead = Math.max(0, -dy + 0.15);
+        const sideTemples = Math.max(0, Math.abs(dx) - 0.32) * Math.max(0, 0.7 - Math.abs(dy));
+        const chinArea = Math.max(0, dy - 0.32) * Math.max(0, 0.55 - Math.abs(dx));
+        const hairSpatial = Math.min(1.0, upperHead * 1.8 + sideTemples * 2.2 + chinArea * 1.5);
+
+        // Detect dark hair pigment fibers (low luminance, low saturation)
+        const darkFactor = Math.max(0, Math.min(1, (78 - lum) / 50)) * Math.max(0, Math.min(1, (32 - sat) / 25));
+        const silverScore = hairSpatial * darkFactor * (1.0 - eyeMask);
+
+        if (silverScore > 0.02) {
+          // Gradual chronological silvering factor that scales with age stage 't'
+          const intensity = Math.min(0.85, t * silverScore * 0.85);
+          const targetLum = Math.min(195, lum * 0.65 + 75);
+
+          r = Math.round(r * (1 - intensity) + targetLum * intensity);
+          g = Math.round(g * (1 - intensity) + (targetLum + 1) * intensity);
+          b = Math.round(b * (1 - intensity) + (targetLum + 5) * intensity);
+        }
+      }
+
+      result[idx] = r;
+      result[idx + 1] = g;
+      result[idx + 2] = b;
     }
   }
 

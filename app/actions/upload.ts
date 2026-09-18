@@ -212,10 +212,10 @@ export async function upload(previousState: any, formData: FormData) {
     return { message: "Storage error initializing prediction. Please try again.", status: 500 };
   }
 
-  // 9. Dispatch prediction (Replicate with seamless fallback to built-in generator)
+  // 9. Dispatch prediction (prioritize free neural AI engine)
   let predictionHandled = false;
 
-  if (process.env.AI_PROVIDER !== "local" && process.env.REPLICATE_API_TOKEN) {
+  if (process.env.AI_PROVIDER === "replicate" && process.env.REPLICATE_API_TOKEN) {
     const replicate = new Replicate({
       auth: process.env.REPLICATE_API_TOKEN || "",
     });
@@ -246,7 +246,6 @@ export async function upload(previousState: any, formData: FormData) {
         prediction.status !== "failed" &&
         prediction.status !== "canceled"
       ) {
-        // Mark generation as processing with Replicate prediction ID
         await transitionGeneration(generation.id, "processing", {
           replicatePredictionId: prediction.id,
         });
@@ -259,19 +258,19 @@ export async function upload(previousState: any, formData: FormData) {
     }
   }
 
-  // If external provider was not used or failed (e.g. 402 payment required), run neural AI aging engine
+  // If external provider was not used or failed, run free neural AI aging engine
   if (!predictionHandled) {
-    try {
-      await generateFreeAiAging(
-        normalizedImage.buffer,
-        user.id,
-        generation.id,
-      );
-    } catch (localErr: any) {
+    // Run generation in the background so the user is immediately redirected to /p/[id]
+    // where they can watch real-time animated progress instead of waiting on the modal!
+    generateFreeAiAging(
+      normalizedImage.buffer,
+      user.id,
+      generation.id,
+    ).catch(async (localErr: any) => {
       console.error("Local aging generation exception:", localErr);
       await transitionGeneration(generation.id, "failed", {
         errorCode: GENERATION_ERROR_CODES.REPLICATE_FAILED,
-        errorMessage: localErr?.message || "Local generation failed",
+        errorMessage: localErr?.message || "Generation failed",
       });
       await creditsRepo.refundCredits({
         userId: user.id,
@@ -279,12 +278,7 @@ export async function upload(previousState: any, formData: FormData) {
         amount: 10,
         reason: "Generation exception",
       });
-
-      return {
-        message: "Unexpected error generating gif, please try again",
-        status: 500,
-      };
-    }
+    });
   }
 
   redirect(`/p/${key}`);

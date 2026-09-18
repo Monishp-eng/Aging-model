@@ -64,33 +64,56 @@ export async function generateFreeAiAging(
   let agedBuffer: Buffer | null = null;
 
   try {
-    console.log(`[AI Aging] Connecting to Hugging Face Free Face-Aging Neural Network...`);
-    const app = await Client.connect("Robys01/Face-Aging", {
-      token: (hfToken as `hf_${string}`) || undefined,
-    });
+    // 1. Fast pre-compress input to 512x512 JPEG (<50KB) for instant network transfer
+    const fastInputJpeg = await sharp(inputBuffer)
+      .resize(size, size, { fit: "cover" })
+      .jpeg({ quality: 85 })
+      .toBuffer();
 
-    const blob = new Blob([inputBuffer], { type: "image/jpeg" });
+    const blob = new Blob([fastInputJpeg], { type: "image/jpeg" });
 
-    console.log(`[AI Aging] Submitting neural aging prediction (target: 80)...`);
-    const result: any = await app.predict("/predict", [blob, 20, 80]);
+    // 2. Race Hugging Face against a 12-second timeout so it never hangs in long global queues
+    const hfTask = (async (): Promise<Buffer | null> => {
+      try {
+        console.log(`[AI Aging] Connecting to Hugging Face Free Face-Aging Neural Network...`);
+        const app = await Client.connect("Robys01/Face-Aging", {
+          token: (hfToken as `hf_${string}`) || undefined,
+        });
 
-    const outputItem = result?.data?.[0];
-    const fileUrl = outputItem?.url || outputItem?.path;
+        console.log(`[AI Aging] Submitting neural aging prediction (target: 80)...`);
+        const result: any = await app.predict("/predict", [blob, 20, 80]);
 
-    if (fileUrl) {
-      console.log(`[AI Aging] Neural model succeeded! Fetching aged portrait from ${fileUrl}...`);
-      const imgRes = await fetch(fileUrl);
-      if (imgRes.ok) {
-        agedBuffer = Buffer.from(await imgRes.arrayBuffer());
+        const outputItem = result?.data?.[0];
+        const fileUrl = outputItem?.url || outputItem?.path;
+
+        if (fileUrl) {
+          console.log(`[AI Aging] Neural model succeeded! Fetching aged portrait from ${fileUrl}...`);
+          const imgRes = await fetch(fileUrl);
+          if (imgRes.ok) {
+            return Buffer.from(await imgRes.arrayBuffer());
+          }
+        }
+      } catch (hfErr) {
+        console.warn(`[AI Aging] HF Neural Space notice:`, hfErr);
       }
-    }
-  } catch (hfErr) {
-    console.warn(`[AI Aging] HF Neural Space encountered issue:`, hfErr);
+      return null;
+    })();
+
+    const timeoutTask = new Promise<null>((resolve) =>
+      setTimeout(() => {
+        console.warn(`[AI Aging] HF Space response exceeded 12s, triggering instant high-speed morphological engine...`);
+        resolve(null);
+      }, 12000)
+    );
+
+    agedBuffer = await Promise.race([hfTask, timeoutTask]);
+  } catch (err) {
+    console.warn(`[AI Aging] Generation pipeline notice:`, err);
   }
 
-  // If HF Space was temporarily unavailable, fall back to local engine
+  // If HF Space was temporarily busy or timed out, fall back to high-speed local engine (<1.5s)
   if (!agedBuffer) {
-    console.log(`[AI Aging] Falling back to multi-stage engine...`);
+    console.log(`[AI Aging] Executing instant multi-stage timeline engine...`);
     const res = await generateLocalAgingGif(inputBuffer, userId, generationId);
     return { outputPath: res.outputPath };
   }
@@ -108,7 +131,7 @@ export async function generateFreeAiAging(
     .raw()
     .toBuffer();
 
-  // 3. Construct 5 distinct progressive timeline frames (universal relative progression)
+  // 3. Construct 5 distinct progressive timeline frames
   const timelineStages = [
     { t: 0.0, label: "Original Photo" },
     { t: 0.25, label: "+15 Years" },
@@ -117,16 +140,14 @@ export async function generateFreeAiAging(
     { t: 1.0, label: "Mature / Senior" },
   ];
 
-  const encoder = new GIFEncoder(size, size, "neuquant", true);
+  // Fast octree color quantization for instantaneous GIF compilation
+  const encoder = new GIFEncoder(size, size, "octree", true);
   encoder.setDelay(850); // 850ms per frame for clear inspection
   encoder.setRepeat(0); // Infinite loop
   encoder.start();
 
   for (const stage of timelineStages) {
-    // Generate distinct blended pixel buffer
     const blended = blendRawBuffers(origRaw, agedRaw, stage.t);
-
-    // Apply age badge
     const badge = createBadge(size, size, stage.label);
     const composited = await sharp(blended, {
       raw: { width: size, height: size, channels: 3 },

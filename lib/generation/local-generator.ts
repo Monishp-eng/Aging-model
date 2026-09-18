@@ -48,7 +48,7 @@ export async function generateLocalAgingGif(
   const baseImg = sharp(inputBuffer).resize(size, size, { fit: "cover" });
   const baseBuffer = await baseImg.png().toBuffer();
 
-  const encoder = new GIFEncoder(size, size, "neuquant", true);
+  const encoder = new GIFEncoder(size, size, "octree", true);
   encoder.setDelay(800); // 800ms per frame
   encoder.setRepeat(0); // Infinite loop
   encoder.start();

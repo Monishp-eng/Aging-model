@@ -4,6 +4,7 @@ export interface DataProps {
   id: string;
   input: string;
   output: string | null;
+  portrait?: string | null;
   failed: boolean | null;
   expired?: boolean | null;
   created_at: string;

@@ -41,7 +41,7 @@ function blendRawBuffers(
   origBuf: Buffer,
   agedBuf: Buffer,
   t: number,
-  size: number = 512,
+  size: number = 768,
 ): Buffer {
   const len = size * size * 3;
   const result = Buffer.alloc(len);
@@ -78,34 +78,34 @@ function blendRawBuffers(
       let b = Math.round(origBuf[idx + 2] * oneMinusT + agedBuf[idx + 2] * blendT);
 
       // --- Biological Hair & Beard Silvering/Graying Engine ---
-      if (t > 0.15 && dist < 1.15) {
+      if (t > 0.15 && dist < 1.2) {
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
         const sat = Math.max(r, g, b) - Math.min(r, g, b);
 
         // Protect eye sockets and pupils from discoloration
         const eyeDx = Math.abs(x - cx) / (size * 0.20);
-        const eyeDy = Math.abs(y - (cy - 12)) / (size * 0.08);
+        const eyeDy = Math.abs(y - (cy - size * 0.035)) / (size * 0.08);
         const eyeDist = Math.sqrt(eyeDx * eyeDx + eyeDy * eyeDy);
         const eyeMask = Math.max(0, Math.min(1, 1.2 - eyeDist));
 
         // Continuous biological hair density mapping (crown, temples, beard)
         const upperHead = Math.max(0, -dy + 0.15);
-        const sideTemples = Math.max(0, Math.abs(dx) - 0.32) * Math.max(0, 0.7 - Math.abs(dy));
-        const chinArea = Math.max(0, dy - 0.32) * Math.max(0, 0.55 - Math.abs(dx));
-        const hairSpatial = Math.min(1.0, upperHead * 1.8 + sideTemples * 2.2 + chinArea * 1.5);
+        const sideTemples = Math.max(0, Math.abs(dx) - 0.25) * Math.max(0, 0.75 - Math.abs(dy));
+        const chinArea = Math.max(0, dy - 0.28) * Math.max(0, 0.6 - Math.abs(dx));
+        const hairSpatial = Math.min(1.0, upperHead * 1.6 + sideTemples * 2.2 + chinArea * 1.4);
 
-        // Detect dark hair pigment fibers (low luminance, low saturation)
-        const darkFactor = Math.max(0, Math.min(1, (78 - lum) / 50)) * Math.max(0, Math.min(1, (32 - sat) / 25));
+        // Detect hair melanin fibers (dark/medium tones even under lighting, low-medium saturation)
+        const darkFactor = Math.max(0, Math.min(1, (135 - lum) / 95)) * Math.max(0, Math.min(1, (55 - sat) / 40));
         const silverScore = hairSpatial * darkFactor * (1.0 - eyeMask);
 
-        if (silverScore > 0.02) {
-          // Gradual chronological silvering factor that scales with age stage 't'
-          const intensity = Math.min(0.85, t * silverScore * 0.85);
-          const targetLum = Math.min(195, lum * 0.65 + 75);
+        if (silverScore > 0.03) {
+          // Gradual biological silvering factor that scales with age stage 't'
+          const intensity = Math.min(0.90, (t * 1.2) * Math.pow(silverScore, 0.8));
+          const targetLum = Math.min(215, Math.max(165, lum * 0.5 + 130));
 
-          r = Math.round(r * (1 - intensity) + targetLum * intensity);
-          g = Math.round(g * (1 - intensity) + (targetLum + 1) * intensity);
-          b = Math.round(b * (1 - intensity) + (targetLum + 5) * intensity);
+          r = Math.round(r * (1 - intensity) + (targetLum - 2) * intensity);
+          g = Math.round(g * (1 - intensity) + targetLum * intensity);
+          b = Math.round(b * (1 - intensity) + (targetLum + 4) * intensity);
         }
       }
 
@@ -131,7 +131,7 @@ export async function generateFreeAiAging(
   // 1. Mark generation as processing
   await transitionGeneration(generationId, "processing");
 
-  const size = 512;
+  const size = 768;
   const hfToken = process.env.HF_TOKEN;
 
   let agedBuffer: Buffer | null = null;
@@ -139,7 +139,7 @@ export async function generateFreeAiAging(
   try {
     // 1. Fast pre-compress input to 512x512 JPEG (<50KB) for instant network transfer
     const fastInputJpeg = await sharp(inputBuffer)
-      .resize(size, size, { fit: "cover" })
+      .resize(512, 512, { fit: "cover" })
       .jpeg({ quality: 85 })
       .toBuffer();
 
@@ -191,7 +191,7 @@ export async function generateFreeAiAging(
     return { outputPath: res.outputPath };
   }
 
-  // 2. Prepare 512x512 raw RGB buffers for original and neural aged face
+  // 2. Prepare 768x768 raw RGB buffers for original and neural aged face
   const origRaw = await sharp(inputBuffer)
     .resize(size, size, { fit: "cover" })
     .removeAlpha()
@@ -214,7 +214,8 @@ export async function generateFreeAiAging(
     { t: 0.58, label: "+30 Years", delay: 600 },
   ];
 
-  const encoder = new GIFEncoder(size, size, "octree", true);
+  const encoder = new GIFEncoder(size, size, "neuquant", true);
+  encoder.setQuality(4); // NeuQuant high-fidelity 256-color palette
   encoder.setRepeat(0); // Infinite loop
   encoder.start();
 
@@ -225,6 +226,7 @@ export async function generateFreeAiAging(
     const composited = await sharp(blended, {
       raw: { width: size, height: size, channels: 3 },
     })
+      .sharpen({ sigma: 1.1, m1: 1.1, m2: 2.0 })
       .composite([{ input: badge, blend: "over" }])
       .raw()
       .toBuffer();
@@ -258,7 +260,8 @@ export async function generateFreeAiAging(
     const hdPortraitBuffer = await sharp(hdPortrait, {
       raw: { width: size, height: size, channels: 3 },
     })
-      .jpeg({ quality: 92 })
+      .sharpen({ sigma: 1.0, m1: 1.0, m2: 1.5 })
+      .jpeg({ quality: 95 })
       .toBuffer();
 
     const hdKey = getOutputKey(userId, generationId, "jpg");

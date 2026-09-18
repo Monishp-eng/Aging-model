@@ -37,6 +37,19 @@ function SplitSlider({
   const [sliderPos, setSliderPos] = useState(50);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isDragging = useRef(false);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(containerRef.current);
+    setContainerWidth(containerRef.current.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   const handleMove = useCallback((clientX: number) => {
     if (!containerRef.current) return;
@@ -71,16 +84,16 @@ function SplitSlider({
       }}
       onMouseMove={onMouseMove}
       onTouchMove={onTouchMove}
-      className="relative aspect-square w-full select-none overflow-hidden rounded-2xl cursor-ew-resize"
+      className="relative aspect-square w-full select-none overflow-hidden rounded-2xl cursor-ew-resize touch-none"
     >
-      {/* Background: Aged Output Image */}
+      {/* Background: Aged Output Image (HD Portrait) */}
       <img
         src={afterImage}
         alt="Aged Result"
         className="pointer-events-none absolute inset-0 h-full w-full object-cover"
       />
-      <div className="absolute top-3 right-3 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md z-10">
-        Aged Result
+      <div className="absolute top-3 right-3 rounded-full bg-black/75 px-3 py-1 text-[11px] font-semibold text-white backdrop-blur-md shadow-md z-10">
+        Senior Result
       </div>
 
       {/* Foreground: Original Image clipped by sliderPos */}
@@ -90,11 +103,11 @@ function SplitSlider({
       >
         <img
           src={beforeImage}
-          alt="Original"
+          alt="Original Photo"
           className="pointer-events-none absolute inset-0 h-full max-w-none object-cover"
-          style={{ width: containerRef.current ? `${containerRef.current.clientWidth}px` : "100%" }}
+          style={{ width: containerWidth ? `${containerWidth}px` : "100%" }}
         />
-        <div className="absolute top-3 left-3 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+        <div className="absolute top-3 left-3 rounded-full bg-black/75 px-3 py-1 text-[11px] font-semibold text-white backdrop-blur-md shadow-md">
           Original Photo
         </div>
       </div>
@@ -116,6 +129,7 @@ export default function PhotoBooth({
   id,
   input,
   output,
+  portrait,
   failed,
   expired,
   initialState = 1,
@@ -124,6 +138,7 @@ export default function PhotoBooth({
   id?: string;
   input: string;
   output: string | null;
+  portrait?: string | null;
   failed?: boolean | null;
   expired?: boolean | null;
   initialState?: 0 | 1;
@@ -164,9 +179,12 @@ export default function PhotoBooth({
   };
 
   const handleDownload = () => {
-    if (!output) return;
+    const isJpg = viewMode === "split" && !!portrait;
+    const downloadTarget = isJpg ? portrait! : output;
+    if (!downloadTarget) return;
+
     setDownloading(true);
-    fetch(output, {
+    fetch(downloadTarget, {
       headers: new Headers({
         Origin: location.origin,
       }),
@@ -178,9 +196,9 @@ export default function PhotoBooth({
       })
       .then((blob) => {
         const blobUrl = window.URL.createObjectURL(blob);
-        forceDownload(blobUrl, `${id || "extrapolate-aging"}.gif`);
+        forceDownload(blobUrl, `${id || "extrapolate-aging"}.${isJpg ? "jpg" : "gif"}`);
         setDownloading(false);
-        toast.success("Aging GIF downloaded!");
+        toast.success(isJpg ? "HD Portrait Photo downloaded!" : "Aging GIF downloaded!");
       })
       .catch((e) => {
         console.error("Download failed:", e);
@@ -286,7 +304,7 @@ export default function PhotoBooth({
                   ) : (
                     <>
                       <Download className="mr-1 h-3.5 w-3.5" />
-                      <span>Save GIF</span>
+                      <span>{viewMode === "split" && portrait ? "Save HD Photo" : "Save GIF"}</span>
                     </>
                   )}
                 </Button>
@@ -385,7 +403,7 @@ export default function PhotoBooth({
                   </div>
                 ) : (
                   viewMode === "split" ? (
-                    <SplitSlider beforeImage={input} afterImage={output || ""} />
+                    <SplitSlider beforeImage={input} afterImage={portrait || output || ""} />
                   ) : (
                     <img
                       alt="AI aging progression"

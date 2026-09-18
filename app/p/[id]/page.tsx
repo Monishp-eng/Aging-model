@@ -36,6 +36,7 @@ async function getData(id: string) {
   const expired = isGenerationExpired(generation);
   let inputUrl = "";
   let outputUrl: string | null = null;
+  let portraitUrl: string | null = null;
 
   if (!expired) {
     try {
@@ -44,6 +45,13 @@ async function getData(id: string) {
       if (generation.output_path) {
         const outputAsset = await getAuthorizedGenerationAsset(auth.user.id, generation.id, "output");
         outputUrl = outputAsset.signedUrl;
+
+        try {
+          const portraitAsset = await getAuthorizedGenerationAsset(auth.user.id, generation.id, "portrait");
+          portraitUrl = portraitAsset.signedUrl;
+        } catch {
+          portraitUrl = outputUrl;
+        }
       }
     } catch (err) {
       console.warn(`Could not generate signed URLs for generation ${generation.id}:`, err);
@@ -54,6 +62,7 @@ async function getData(id: string) {
     id: generation.id,
     input: inputUrl,
     output: outputUrl,
+    portrait: portraitUrl,
     failed: generation.status === "failed",
     expired,
     created_at: generation.created_at,

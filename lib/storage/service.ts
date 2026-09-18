@@ -62,7 +62,7 @@ export async function createSignedAssetUrl(
 export async function getAuthorizedGenerationAsset(
   userId: string,
   generationId: string,
-  assetType: "input" | "output",
+  assetType: "input" | "output" | "portrait",
 ): Promise<{ signedUrl: string; bucket: string; path: string }> {
   if (!userId || !generationId) {
     throw new StorageUnauthorizedError("User ID and Generation ID are required");
@@ -90,6 +90,12 @@ export async function getAuthorizedGenerationAsset(
       throw new StorageNotFoundError("Output asset is not yet available for this generation");
     }
     storageRef = generation.output_path;
+  } else if (assetType === "portrait") {
+    if (!generation.output_path) {
+      throw new StorageNotFoundError("Output asset is not yet available for this generation");
+    }
+    // High-definition 24-bit JPEG portrait asset
+    storageRef = generation.output_path.replace(/\.[a-zA-Z0-9]+$/, ".jpg");
   } else {
     throw new StorageError(`Unsupported asset type: ${assetType}`);
   }

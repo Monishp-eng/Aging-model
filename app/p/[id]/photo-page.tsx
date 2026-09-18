@@ -27,6 +27,7 @@ export default function PhotoPage({
           ...prev,
           input: gen.inputUrl || prev.input,
           output: gen.outputUrl,
+          portrait: gen.portraitUrl || gen.outputUrl,
           failed: gen.failed,
           expired: gen.expired,
         }));
@@ -145,6 +146,7 @@ export default function PhotoPage({
           id={id}
           input={data.input}
           output={data.output}
+          portrait={data.portrait}
           failed={data.failed}
           expired={data.expired}
           className="h-[350px] sm:h-[600px] sm:w-[600px]"

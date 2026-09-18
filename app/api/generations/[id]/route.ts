@@ -79,6 +79,7 @@ export async function GET(
   const expired = isGenerationExpired(generation);
   let inputUrl: string | null = null;
   let outputUrl: string | null = null;
+  let portraitUrl: string | null = null;
 
   if (!expired) {
     try {
@@ -96,6 +97,17 @@ export async function GET(
           "output",
         );
         outputUrl = outputAsset.signedUrl;
+
+        try {
+          const portraitAsset = await getAuthorizedGenerationAsset(
+            auth.user.id,
+            generation.id,
+            "portrait",
+          );
+          portraitUrl = portraitAsset.signedUrl;
+        } catch {
+          portraitUrl = outputUrl;
+        }
       }
     } catch (err) {
       console.warn(
@@ -111,6 +123,7 @@ export async function GET(
     status: generation.status,
     inputUrl,
     outputUrl,
+    portraitUrl,
     failed: generation.status === "failed",
     expired,
     errorCode: generation.error_code,

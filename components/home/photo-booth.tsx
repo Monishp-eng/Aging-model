@@ -243,23 +243,23 @@ export default function PhotoBooth({
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-semibold text-neutral-900">
-                        {elapsed < 3
-                          ? "Detecting facial landmarks..."
-                          : elapsed < 7
-                          ? "Synthesizing neural aging progression..."
-                          : elapsed < 11
-                          ? "Blending chronological timeline..."
-                          : "Finalizing animated aging GIF..."}
+                        {elapsed < 5
+                          ? "Detecting facial geometry & landmarks..."
+                          : elapsed < 16
+                          ? "Synthesizing deep neural aging transformation..."
+                          : elapsed < 24
+                          ? "Blending 5-stage chronological timeline..."
+                          : "Finalizing high-resolution aging GIF..."}
                       </p>
                       <p className="text-xs text-neutral-500">
-                        {elapsed}s elapsed · 100% Free AI Engine
+                        {elapsed}s elapsed · Free Neural AI Engine
                       </p>
 
                       <div className="mx-auto mt-4 h-1.5 w-52 overflow-hidden rounded-full bg-neutral-200/70">
                         <div
                           className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-500 transition-all duration-1000 ease-out"
                           style={{
-                            width: `${Math.min(95, Math.floor((elapsed / 12) * 100))}%`,
+                            width: `${Math.min(95, Math.floor((elapsed / 25) * 100))}%`,
                           }}
                         />
                       </div>

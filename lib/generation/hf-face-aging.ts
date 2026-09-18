@@ -72,7 +72,7 @@ export async function generateFreeAiAging(
 
     const blob = new Blob([fastInputJpeg], { type: "image/jpeg" });
 
-    // 2. Race Hugging Face against a 12-second timeout so it never hangs in long global queues
+    // 2. Race Hugging Face against a 45-second timeout so the neural network can complete
     const hfTask = (async (): Promise<Buffer | null> => {
       try {
         console.log(`[AI Aging] Connecting to Hugging Face Free Face-Aging Neural Network...`);
@@ -101,9 +101,9 @@ export async function generateFreeAiAging(
 
     const timeoutTask = new Promise<null>((resolve) =>
       setTimeout(() => {
-        console.warn(`[AI Aging] HF Space response exceeded 12s, triggering instant high-speed morphological engine...`);
+        console.warn(`[AI Aging] HF Space response exceeded 45s, triggering high-speed morphological fallback...`);
         resolve(null);
-      }, 12000)
+      }, 45000)
     );
 
     agedBuffer = await Promise.race([hfTask, timeoutTask]);

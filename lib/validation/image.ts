@@ -131,21 +131,23 @@ export async function validateAndNormalizeImage(
   }
 
   // 3. Normalization & EXIF/Privacy Stripping:
-  // .rotate() auto-rotates based on EXIF orientation, then sharp strips EXIF by default
+  // .rotate() auto-rotates based on EXIF orientation, resize clamps to 1280px max for speed, and strips EXIF
   try {
     const normalizedBuffer = await sharp(buffer)
       .rotate()
+      .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })
       .jpeg({
-        quality: 90,
-        mozjpeg: true,
+        quality: 88,
       })
       .toBuffer();
+
+    const normalizedMeta = await sharp(normalizedBuffer).metadata();
 
     return {
       buffer: normalizedBuffer,
       format: "jpeg",
-      width,
-      height,
+      width: normalizedMeta.width || width,
+      height: normalizedMeta.height || height,
       mimeType: "image/jpeg",
     };
   } catch (err: any) {
